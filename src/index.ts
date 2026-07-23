@@ -165,7 +165,30 @@ class SearxngBridgeServer {
       console.error('[Unhandled Rejection] at:', promise, 'reason:', reason);
     });
 
-    this.server = new Server(
+    this.axiosInstance = axios.create({
+      baseURL: SEARXNG_URL,
+      timeout: 30000, // 30s timeout for slower instances
+      headers: {
+        // Add a common browser User-Agent to potentially avoid bot detection
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+      }
+    });
+
+    this.server = this.createServer();
+
+    // Validate SearXNG connection on startup
+    this.validateSearxngConnection();
+
+    process.on('SIGINT', async () => {
+      await this.server.close();
+      process.exit(0);
+    });
+
+    setInterval(() => this.cleanCache(), 60 * 1000); // Clean cache every minute
+  }
+
+  private createServer(): Server {
+    const server = new Server(
       {
         name: 'searxng-bridge',
         version: PACKAGE_VERSION,
@@ -178,34 +201,15 @@ class SearxngBridgeServer {
       }
     );
 
-    this.axiosInstance = axios.create({
-      baseURL: SEARXNG_URL,
-      timeout: 30000, // 30s timeout for slower instances
-      headers: {
-        // Add a common browser User-Agent to potentially avoid bot detection
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
-      }
-    });
-
-    // Validate SearXNG connection on startup
-    this.validateSearxngConnection();
-
-    this.setupToolHandlers();
-
-    this.server.onerror = (error) => {
+    this.setupToolHandlers(server);
+    server.onerror = (error) => {
       if (error instanceof McpError && error.code === ErrorCode.ConnectionClosed) {
         console.error('[MCP Connection] Client connection closed unexpectedly');
       } else {
         console.error('[MCP Error]', error);
       }
     };
-
-    process.on('SIGINT', async () => {
-      await this.server.close();
-      process.exit(0);
-    });
-    
-    setInterval(() => this.cleanCache(), 60 * 1000); // Clean cache every minute
+    return server;
   }
 
   private cleanCache() {
@@ -215,8 +219,8 @@ class SearxngBridgeServer {
     }
   }
 
-  private setupToolHandlers() {
-    this.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  private setupToolHandlers(server: Server) {
+    server.setRequestHandler(ListToolsRequestSchema, async () => ({
       tools: [
         {
           name: 'search',
@@ -271,7 +275,7 @@ class SearxngBridgeServer {
       ],
     }));
 
-    this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (request.params.name === 'health_check') {
         return this.performHealthCheck();
       }
@@ -488,7 +492,7 @@ class SearxngBridgeServer {
           transport.onclose = () => {
             if (transport.sessionId) delete transports[transport.sessionId];
           };
-          await this.server.connect(transport);
+          await this.createServer().connect(transport);
         } else {
           res
             .status(400)

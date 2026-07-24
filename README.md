@@ -152,6 +152,7 @@ Check the health and connectivity status of the SearXNG instance and bridge serv
 | `PORT` | No | `3002` | HTTP server port (when `TRANSPORT=http`) |
 | `HOST` | No | `127.0.0.1` | Server bind address (use `0.0.0.0` for containers) |
 | `CORS_ORIGIN` | No | `localhost:3002` (dev) / `*` (prod) | Comma-separated allowed origins for CORS |
+| `MCP_ALLOWED_HOSTS` | No | -- | Additional comma-separated `Host` header values allowed by DNS rebinding protection |
 | `MCP_HTTP_BEARER` | No | -- | Bearer token for HTTP endpoint authentication |
 | `SEARXNG_BRIDGE_DEBUG` | No | `false` | Enable debug logging (`true` to enable) |
 

@@ -46,6 +46,7 @@ const isValidSearchArgs = (args: any): args is SearchArgs => {
 
 const SEARXNG_URL = process.env.SEARXNG_INSTANCE_URL;
 const DEBUG_MODE = process.env.SEARXNG_BRIDGE_DEBUG === 'true';
+const EXTRA_ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS?.split(',').map((host) => host.trim()).filter(Boolean) ?? [];
 
 // Logging utility for redacting sensitive information
 const redactLog = (message: string, ...args: any[]) => {
@@ -487,7 +488,7 @@ class SearxngBridgeServer {
                 transports[sid] = transport;
               },
               enableDnsRebindingProtection: true, // Enable for security
-              allowedHosts: [`${HOST}:${PORT}`, `localhost:${PORT}`, '127.0.0.1:' + PORT]
+              allowedHosts: [`${HOST}:${PORT}`, `localhost:${PORT}`, '127.0.0.1:' + PORT, ...EXTRA_ALLOWED_HOSTS]
             });
           transport.onclose = () => {
             if (transport.sessionId) delete transports[transport.sessionId];

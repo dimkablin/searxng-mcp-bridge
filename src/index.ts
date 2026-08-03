@@ -44,7 +44,33 @@ const isValidSearchArgs = (args: any): args is SearchArgs => {
   return true;
 };
 
+interface FetchArgs {
+  urls: string[];
+  max_chars?: number;
+}
+
+const isHttpUrl = (value: string): boolean => {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
+const isValidFetchArgs = (args: any): args is FetchArgs => {
+  if (typeof args !== 'object' || args === null || !Array.isArray(args.urls)) return false;
+  if (args.urls.length === 0 || args.urls.length > 10) return false;
+  if (!args.urls.every((url: unknown) => typeof url === 'string' && isHttpUrl(url))) return false;
+  if (
+    args.max_chars !== undefined &&
+    (!Number.isInteger(args.max_chars) || args.max_chars < 1 || args.max_chars > 100000)
+  ) return false;
+  return true;
+};
+
 const SEARXNG_URL = process.env.SEARXNG_INSTANCE_URL;
+const SEARCH_SERVICE_URL = process.env.SEARCH_SERVICE_URL?.replace(/\/+$/, '');
 const DEBUG_MODE = process.env.SEARXNG_BRIDGE_DEBUG === 'true';
 const EXTRA_ALLOWED_HOSTS = process.env.MCP_ALLOWED_HOSTS?.split(',').map((host) => host.trim()).filter(Boolean) ?? [];
 
@@ -160,6 +186,28 @@ class SearxngBridgeServer {
     };
   }
 
+  private async performFetch(args: FetchArgs) {
+    if (!SEARCH_SERVICE_URL) {
+      return {
+        content: [{ type: 'text', text: 'Fetch is unavailable: SEARCH_SERVICE_URL is not configured.' }],
+        isError: true as const,
+      };
+    }
+
+    try {
+      const response = await axios.post(`${SEARCH_SERVICE_URL}/api/v1/fetch/`, args, {
+        timeout: 30000,
+      });
+      return { content: [{ type: 'text', text: JSON.stringify(response.data, null, 2) }] };
+    } catch (error) {
+      const message = axios.isAxiosError(error) ? error.message : String(error);
+      return {
+        content: [{ type: 'text', text: `Failed to fetch page content: ${message}` }],
+        isError: true as const,
+      };
+    }
+  }
+
   constructor() {
     // Handle unhandled promise rejections to prevent unexpected connection closures
     process.on('unhandledRejection', (reason, promise) => {
@@ -225,13 +273,13 @@ class SearxngBridgeServer {
       tools: [
         {
           name: 'search',
-          description: 'Perform a search using the configured SearxNG instance',
+          description: 'Discover web pages and return titles, URLs, and snippets. This tool does not fetch or read page contents. Never pass a URL as the query; use fetch for URLs returned by search. When fetched content contains enough evidence for the user request, stop calling tools and answer.',
           inputSchema: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
-                description: 'The search query string',
+                description: 'Search terms only, never a URL. Use fetch to read a URL returned by search.',
               },
               language: {
                 type: 'string',
@@ -264,6 +312,29 @@ class SearxngBridgeServer {
             required: ['query'],
           },
         },
+        ...(SEARCH_SERVICE_URL ? [{
+          name: 'fetch',
+          description: 'Fetch readable page text from URLs returned by the search tool. Use this after search when snippets are insufficient. This tool reads pages; it does not discover URLs. When the returned text contains the requested facts, stop researching and answer.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              urls: {
+                type: 'array',
+                items: { type: 'string', format: 'uri' },
+                minItems: 1,
+                maxItems: 10,
+                description: 'HTTP(S) URLs returned by the search tool.',
+              },
+              max_chars: {
+                type: 'number',
+                minimum: 1,
+                maximum: 100000,
+                description: 'Maximum characters to return per page.',
+              },
+            },
+            required: ['urls'],
+          },
+        }] : []),
         {
           name: 'health_check',
           description: 'Check the health and connectivity status of the SearxNG bridge',
@@ -279,6 +350,16 @@ class SearxngBridgeServer {
     server.setRequestHandler(CallToolRequestSchema, async (request) => {
       if (request.params.name === 'health_check') {
         return this.performHealthCheck();
+      }
+
+      if (request.params.name === 'fetch') {
+        if (!isValidFetchArgs(request.params.arguments)) {
+          throw new McpError(
+            ErrorCode.InvalidParams,
+            'Invalid fetch arguments. Requires 1-10 HTTP(S) URLs and optional max_chars from 1 to 100000.'
+          );
+        }
+        return this.performFetch(request.params.arguments);
       }
 
       if (request.params.name !== 'search') {

@@ -15,6 +15,7 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json && node -e \"require('fs').chmodSync('build/index.js', 0o755)\"",
+    "test": "npm run build && node --test tests/*.test.mjs",
     "prepare": "npm run build",
     "watch": "tsc --watch -p tsconfig.json",
     "start": "node build/index.js",
